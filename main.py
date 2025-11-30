@@ -52,13 +52,9 @@ def setup_qdrant():
     global global_qdrant_client
     if global_qdrant_client is None:
         # Try to connect to Qdrant - assume it's running locally
-        # Port 6333 is HTTP, 6334 is gRPC
         try:
-            test_client = QdrantClient(host="localhost", port=6333)
-            # Test connection by trying to get collections
-            test_client.get_collections()
-            global_qdrant_client = test_client
-            logger.info("Connected to Qdrant on port 6333")
+            global_qdrant_client = QdrantClient(host="localhost", port=6334)
+            logger.info("Connected to Qdrant")
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}")
             global_qdrant_client = QdrantClient(":memory:")
@@ -67,17 +63,12 @@ def setup_qdrant():
     # Create collection if it doesn't exist
     try:
         global_qdrant_client.get_collection(global_collection_name)
-        logger.info(f"Collection {global_collection_name} already exists")
     except Exception:
-        try:
-            global_qdrant_client.create_collection(
-                collection_name=global_collection_name,
-                vectors_config=VectorParams(size=global_embedding_dim, distance=Distance.COSINE)
-            )
-            logger.info(f"Created collection {global_collection_name}")
-        except Exception as e:
-            logger.error(f"Failed to create collection: {e}")
-            raise
+        global_qdrant_client.create_collection(
+            collection_name=global_collection_name,
+            vectors_config=VectorParams(size=global_embedding_dim, distance=Distance.COSINE)
+        )
+        logger.info(f"Created collection {global_collection_name}")
 
 # State dictionary for LangGraph
 def create_initial_state(query: str) -> Dict[str, Any]:
@@ -94,20 +85,18 @@ def retrieve_documents_node(state: Dict[str, Any]) -> Dict[str, Any]:
     query = state["query"]
     try:
         query_vector = generate_embedding(query)
-        # Use query_points instead of search (newer API)
-        # query_points accepts list[float] directly as query
-        search_result = global_qdrant_client.query_points(
+        search_result = global_qdrant_client.search(
             collection_name=global_collection_name,
-            query=query_vector,  # Can pass list[float] directly
+            query_vector=query_vector,
             limit=5
         )
         docs = []
-        for point in search_result.points:
+        for hit in search_result:
             docs.append({
-                "id": point.id,
-                "content": point.payload.get("content", ""),
-                "metadata": point.payload.get("metadata", {}),
-                "score": point.score if hasattr(point, 'score') else None
+                "id": hit.id,
+                "content": hit.payload.get("content", ""),
+                "metadata": hit.payload.get("metadata", {}),
+                "score": hit.score
             })
         state["retrieved_docs"] = docs
         state["processing_steps"].append("Retrieved documents from Qdrant")
